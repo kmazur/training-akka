@@ -1,0 +1,501 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <title>reveal.js</title>
+
+    <link rel="stylesheet" href="css/reset.css">
+    <link rel="stylesheet" href="css/reveal.css">
+    <link rel="stylesheet" href="css/theme/black.css">
+    <link rel="stylesheet" href="css/custom.css">
+
+    <!-- Theme used for syntax highlighting of code -->
+    <link rel="stylesheet" href="lib/css/monokai.css">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
+
+    <!-- Printing and PDF exports -->
+    <script>
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.type = 'text/css';
+        link.href = window.location.search.match(/print-pdf/gi) ? 'css/print/pdf.css' : 'css/print/paper.css';
+        document.getElementsByTagName('head')[0].appendChild(link);
+    </script>
+</head>
+<body>
+<div class="reveal">
+    <div class="slides">
+        <!--
+        Title
+        Agenda
+        Assumptions
+            Familiar with:
+            Java 8
+            Java concurrency (Threads, ExecutorService, CompletableFuture, etc)
+        Introduction
+            - problem with shared state
+                need to use synchronized/block
+                    - dead-locks
+                        two more threads are blocked because of waiting for each other forever.
+                    - live-locks
+                        two threads are busy responding to actions of each other
+                    - starvation
+                        a greedy thread holds a resource for a long time so other threads are blocked forever
+                    - high contention
+                        - optimistic locking example
+            - problem with ExecutorService/ForkJoinPool
+                - a lot of synchronization code
+            - CompletableFuture
+                - much better
+                - but still manual join
+                - code with concurrency in mind (you can shoot yourself in the foot)
+
+            - how to scale?
+                - local process
+                - multi process (IPC)
+                - multi host
+
+        actor model
+            - An actor is a computational entity that, in response to a message it receives, can concurrently:
+                send a finite number of messages to other actors;
+                create a finite number of new actors;
+                designate the behavior to be used for the next message it receives.
+
+            - All Computation Is Performed Within an Actor
+                - No single actor can process two messages simultaneously. This is a critical guarantee because it allows us to operate within the actor in a single-threaded illusion
+            - Actors Can Communicate Only Through Messages
+                - at most once delivery
+        akka introduction
+
+        akka parts
+            actors
+            mailboxes
+            routing
+            fault tolerance
+            dispatchers
+            FSM
+            testing
+        akka patterns
+            creation
+            introduction
+            process spawning
+            routing
+                content-based router
+                load balancing
+        Project & libs
+            streams
+            http
+            cluster
+            alpakka - bindings
+        Resources
+        Q&A
+        Thankyou
+        -->
+
+
+        <section style="font-size: smaller">
+            <h1>Agenda</h1>
+            <ol>
+                <li>Assumptions</li>
+                <li>Introduction</li>
+                <li>Shared state</li>
+                <li>Native Java concurrency</li>
+                <li>Modeling concurrency</li>
+                <li>Actor model</li>
+                <li>Akka model</li>
+                <li>Q&A</li>
+            </ol>
+        </section>
+
+        <section data-markdown>
+            ## Assumptions
+
+            You're familiar with:
+            - Java 8
+            - Java concurrency
+                - Java memory model (`synchronized`, `volatile`, happens-before)
+                - java.util.concurrent
+                - Threads
+                - ExecutorService(s)
+                - CompletableFuture
+        </section>
+
+        <section data-markdown>
+            ## Introduction
+
+            We want to have an easily parallelizable system which is easy to reason about.
+
+            How to do that?
+        </section>
+
+
+        <section data-markdown>
+            ## What we've got?
+
+            - Threads?
+            - Processes?
+            - Servers?
+        </section>
+        <section data-markdown>
+            ## Scaling
+
+            - How to scale?
+            - Focus on micro-level scaling in this presentation
+        </section>
+
+        <section data-markdown>
+            ## What do we want?
+
+            I just want to write code that is:
+            - easy to understand
+            - no race conditions, etc. on shared state
+            - no implicit understanding
+            - a little influence from the environment
+        </section>
+
+        <section data-markdown>
+            ### Inter-thread communication
+
+            How to communicate between threads?
+        </section>
+
+        <section data-markdown>
+            <script type="text/template">
+                - wait() and notify()? <!-- .element: class="fragment" data-fragment-index="1" -->
+                - synchronized? <!-- .element: class="fragment" data-fragment-index="2" -->
+                - volatile? <!-- .element: class="fragment" data-fragment-index="3" -->
+                - ReentrantReadWriteLock? <!-- .element: class="fragment" data-fragment-index="4" -->
+            </script>
+        </section>
+
+        <section>
+            <section data-markdown="">
+                Shared state
+
+                ```java
+                public class State {
+                    private long value;
+
+                ...
+                synchronized (value) {
+                    value = 5L;
+                }
+
+                ```
+            </section>
+
+            <section data-markdown="">
+                Shared state
+
+                ```java
+                public class State {
+                    private long value;
+
+                ...
+                public synchronized setValue(long value) {
+                    this.value = value;
+                }
+                ```
+            </section>
+
+            <section data-markdown="">
+                Shared state
+
+                ```java
+                public class State {
+                    private long value;
+                }
+                ...
+                public void setValue(long value) {
+                    lock.lock();
+                    try {
+                        this.value = value;
+                    } finally {
+                        lock.unlock();
+                    }
+                }
+                ```
+            </section>
+
+            <section data-markdown="">
+                Shared state
+
+                ```java
+                public class State {
+                    private Atomic[Reference|Integer] value = new Atomic...
+                }
+                ```
+            </section>
+
+        </section>
+
+        <section data-markdown>
+            ## Problems with shared state
+        </section>
+        <section data-markdown="">
+            <script type="text/template">
+                - Explicit code to handle it <!-- .element: class="fragment" data-fragment-index="1" -->
+                - Implicit understanding <!-- .element: class="fragment" data-fragment-index="2" -->
+                    - Unknown environment<!-- .element: class="fragment" data-fragment-index="3" -->
+                - Race conditions <!-- .element: class="fragment" data-fragment-index="4" -->
+                - Dead-locks <!-- .element: class="fragment" data-fragment-index="5" -->
+                - Live-locks <!-- .element: class="fragment" data-fragment-index="6" -->
+                - Starvation <!-- .element: class="fragment" data-fragment-index="7" -->
+                - High contention <!-- .element: class="fragment" data-fragment-index="8" -->
+                    - Optimistic-locking contention <!-- .element: class="fragment" data-fragment-index="9" -->
+            </script>
+        </section>
+
+        <section data-markdown>
+            ## Conclusion
+
+            # It's hard!
+        </section>
+
+        <section data-markdown>
+            ## Solutions?
+        </section>
+
+        <section data-markdown>
+            Executor(s) / ForkJoinPool won't help
+
+            - explicit fork & join
+            - still all the issues are present (races, implicit understanding, etc.)
+            - a little less code ("developer friendly")
+        </section>
+
+        <section data-markdown>
+            CompletableFuture won't help
+
+            - explicit composition & join
+            - still all the issues are present (races, implicit understanding, etc.)
+            - stream-like processing & composition ("developer friendly")
+        </section>
+
+        <section data-markdown>
+            ## Reminder: What do we want?
+
+            I just want to write code that is:
+            - easy to understand
+            - no race conditions on shared state
+            - no implicit understanding
+            - a little influence from the environment
+        </section>
+
+        <section data-markdown>
+            ## How to do that?
+        </section>
+
+        <section data-markdown>
+            ## Going back to basics
+
+            How to make this simple & reliable in concurrent environment?
+
+            ```java
+            public class State {
+                private int value;
+                public void decrement(int decrement) {
+                    value -= decrement;
+                    if (value % 2 == 0) {
+                       value += decrement;
+                    }
+                }
+            }
+            ```
+        </section>
+
+        <section data-markdown>
+            ### Make it single-threaded?
+        </section>
+
+
+        <section data-markdown>
+            ## Queue decoupling
+
+            ![queuing](img/queuing.JPG)
+        </section>
+
+        <section data-markdown>
+            ## Single queue
+
+            ![single-queue-user-state](img/single-queue-user-state.JPG)
+        </section>
+
+        <section data-markdown>
+            ## Multiple queues
+
+            ![multiple-queue-user-state](img/multiple-queue-user-state.JPG)
+        </section>
+
+        <section data-markdown>
+            ## Multiple queues
+
+            ![multiplex](img/multiplex.JPG)
+        </section>
+
+        <section data-markdown>
+            ## What about threads?
+
+            ![threads-in-queue](img/threads-in-queue.JPG)
+        </section>
+
+
+        <section data-markdown>
+            ## What about threads?
+
+            - 1 new thread on JVM costs ~1 MB+
+            - how can we scale to millions of `State` objects?
+        </section>
+
+
+        <section data-markdown>
+            ### Decouple threading even more
+
+            ![thread-decoupling](img/thread-decoupling.JPG)
+        </section>
+
+
+        <section data-markdown>
+            ## Additional concerns?
+
+            ![thread-decoupling-concerns](img/thread-decoupling-concerns.JPG)
+        </section>
+
+
+        <section data-markdown>
+            ## Addressing concerns
+
+            ![concerns](img/concerns.JPG)
+        </section>
+
+        <section data-markdown>
+            ## Akka and actors
+
+            ![akka](img/akka.JPG)
+        </section>
+
+        <section data-markdown>
+            ## Actor model
+
+            - An actor is a computational entity that:
+                - responds to messages
+                - sends messages
+                - creates new actors
+                - changes it's state
+                - changes it's behavior
+        </section>
+
+        <section data-markdown>
+            ## Actor model
+
+            - All computation is performed within the Actor
+            - No single actor can process two messages simultaneously (single-threaded illusion)
+            - Actors can communicate only through messages
+            - At most once delivery
+        </section>
+
+        <section data-markdown>
+            ## Akka actor example
+
+            ```java
+            public class CounterActor extends AbstractActor {
+                private long value;
+
+                @Override
+                public Receive createReceive() {
+                    return receiveBuilder()
+                    .match(Integer.class, msg -> this.value += msg)
+                    .build();
+                }
+            }
+            ```
+        </section>
+
+
+        <section data-markdown>
+            ## Akka outer context
+
+            ```java
+            public static void main(String[] args) {
+                ActorSystem actorSystem = ActorSystem.create();
+
+                Props props = Props.create(CounterActor.class);
+                ActorRef actorRef = actorSystem.actorOf(props);
+                actorRef.tell(1, ActorRef.noSender());
+            }
+            ```
+        </section>
+
+
+
+
+
+        <section data-markdown>
+            ## Q&A
+
+            Questions?
+        </section>
+
+        <section data-markdown>
+            Thank you
+        </section>
+
+
+
+
+<!--        <section>-->
+<!--            <section data-markdown>-->
+<!--                ## How to scale systems?-->
+<!--            </section>-->
+<!--            <section data-markdown>-->
+<!--                By vertical scaling?-->
+
+<!--                ![vertical-scaling](img/vertical-scaling.JPG)-->
+<!--            </section>-->
+<!--            <section data-markdown>-->
+<!--                By horizonal scaling?-->
+
+<!--                ![horizontal-scaling](img/horizontal-scaling.JPG)-->
+<!--            </section>-->
+<!--            <section data-markdown>-->
+<!--                Scaling cube-->
+
+<!--                ![scaling-cube](img/scaling-cube.JPG)-->
+<!--            </section>-->
+<!--        </section>-->
+
+    </div>
+</div>
+
+<script src="js/reveal.js"></script>
+
+<script>
+    // More info about config & dependencies:
+    // - https://github.com/hakimel/reveal.js#configuration
+    // - https://github.com/hakimel/reveal.js#dependencies
+    Reveal.initialize({
+        dependencies: [
+            {src: 'plugin/markdown/marked.js'},
+            {src: 'plugin/markdown/markdown.js'},
+            {src: 'plugin/notes/notes.js', async: true},
+            {src: 'plugin/highlight/highlight.js', async: true},
+            {src: 'plugin/chalkboard/chalkboard.js', async: true}
+        ],
+
+        chalkboard: {
+            src: "chalkboard.json",
+            color: ['rgba(255,100,100,1)', 'rgba(255,255,255,0.5)']
+        },
+
+        progress: true,
+        slideNumber: true,
+        hash: false,
+        touch: true,
+        defaultTiming: 120,
+        transition: 'convex' // none/fade/slide/convex/concave/zoom
+    });
+</script>
+</body>
+</html>
